@@ -12,13 +12,18 @@ import Array exposing (Array)
 import Html exposing (..)
 import Html.Attributes exposing (style)
 
-type Tile contents
-    = Single (Maybe contents)
-    | Horiz (Maybe contents) Int
-    | Vert (Maybe contents) Int
-    | HorizThenVert (Maybe contents) Int Int
-    | VertThenHoriz (Maybe contents) Int Int
+type Splits
+    = Single
+    | Horiz Int
+    | Vert Int
+    | HorizThenVert Int Int
+    | VertThenHoriz Int Int
 
+type Tile contents
+    = Tile
+        { contents : Maybe contents
+        , splits : Splits
+        }
 
 type Tiles contents
     = Tiles (Array (Tile contents))
@@ -26,7 +31,7 @@ type Tiles contents
 
 single : Tile a
 single =
-    Single Nothing
+    Tile { contents = Nothing, splits = Single }
 
 
 init : Tiles a
@@ -49,25 +54,11 @@ clearContent index tiles =
 updateContent : Int -> (Maybe a -> Maybe a) -> Tiles a -> Tiles a
 updateContent index func (Tiles tiles) =
     let
-        updTiles i tile =
+        updTiles i (Tile tile) =
             if index == i then
-                case tile of
-                    Single ma ->
-                        Single (func ma)
-
-                    Horiz ma h ->
-                        Horiz (func ma) h
-
-                    Vert ma v ->
-                        Vert (func ma) v
-
-                    HorizThenVert ma h v ->
-                        HorizThenVert (func ma) h v
-
-                    VertThenHoriz ma v h ->
-                        VertThenHoriz (func ma) v h
+                Tile { tile | contents = func tile.contents }
             else
-                tile
+                Tile tile
     in
         tiles
             |> Array.indexedMap updTiles
@@ -80,22 +71,22 @@ splitHoriz index (Tiles tiles) =
         newTile =
             single
 
-        updTile tile newIndex =
-            case tile of
-                Single ma ->
-                    Horiz ma newIndex
+        updTile (Tile tile) newIndex =
+            case tile.splits of
+                Single ->
+                    Tile { tile | splits = Horiz newIndex }
 
-                Horiz ma h ->
-                    tile
+                Horiz h ->
+                    Tile tile
 
-                Vert ma v ->
-                    VertThenHoriz ma v newIndex
+                Vert v ->
+                    Tile { tile | splits = VertThenHoriz v newIndex }
 
-                HorizThenVert ma h v ->
-                    tile
+                HorizThenVert h v ->
+                    Tile tile
 
-                VertThenHoriz ma v h ->
-                    tile
+                VertThenHoriz v h ->
+                    Tile tile
 
         updTiles i tile =
             if index == i then
@@ -115,22 +106,22 @@ splitVert index (Tiles tiles) =
         newTile =
             single
 
-        updTile tile newIndex =
-            case tile of
-                Single ma ->
-                    Vert ma newIndex
+        updTile (Tile tile) newIndex =
+            case tile.splits of
+                Single ->
+                    Tile { tile | splits = Vert newIndex }
 
-                Horiz ma h ->
-                    HorizThenVert ma h newIndex
+                Horiz h ->
+                    Tile { tile | splits = HorizThenVert h newIndex }
 
-                Vert ma v ->
-                    tile
+                Vert v ->
+                    Tile tile
 
-                HorizThenVert ma h v ->
-                    tile
+                HorizThenVert h v ->
+                    Tile tile
 
-                VertThenHoriz ma v h ->
-                    tile
+                VertThenHoriz v h ->
+                    Tile tile
 
         updTiles i tile =
             if index == i then
@@ -158,7 +149,7 @@ view render (Tiles tiles) =
 
 -- note: shockingly complex, and not tail-call-optimized
 viewTile : (a -> Html msg) -> Tile a -> Tiles a -> ( Int, Int ) -> Html msg
-viewTile render tile (Tiles tiles) ( row, col ) =
+viewTile render (Tile tile) (Tiles tiles) ( row, col ) =
     let
         getTile index =
             tiles
@@ -191,21 +182,21 @@ viewTile render tile (Tiles tiles) ( row, col ) =
                 ]
                 children
     in
-        case tile of
-            Single ma ->
+        case tile.splits of
+            Single ->
                 gridContainer ( 1, 1 )
                     ( row, col )
                     [ gridContents ( 1, 1 )
-                        [ contentsOrEmpty ma ]
+                        [ contentsOrEmpty tile.contents ]
                     ]
 
-            Horiz ma h ->
+            Horiz h ->
                 case getTile h of
                     Nothing ->
                         gridContainer ( 2, 1 )
                             ( row, col )
                             [ gridContents ( 1, 1 )
-                                [ contentsOrEmpty ma ]
+                                [ contentsOrEmpty tile.contents ]
                             ]
 
                     Just htile ->
@@ -216,17 +207,17 @@ viewTile render tile (Tiles tiles) ( row, col ) =
                             gridContainer ( 2, 1 )
                                 ( row, col )
                                 [ gridContents ( 1, 1 )
-                                    [ contentsOrEmpty ma ]
+                                    [ contentsOrEmpty tile.contents ]
                                 , subtree
                                 ]
 
-            Vert ma v ->
+            Vert v ->
                 case getTile v of
                     Nothing ->
                         gridContainer ( 1, 2 )
                             ( row, col )
                             [ gridContents ( 1, 1 )
-                                [ contentsOrEmpty ma ]
+                                [ contentsOrEmpty tile.contents ]
                             ]
 
                     Just vtile ->
@@ -237,11 +228,11 @@ viewTile render tile (Tiles tiles) ( row, col ) =
                             gridContainer ( 1, 2 )
                                 ( row, col )
                                 [ gridContents ( 1, 1 )
-                                    [ contentsOrEmpty ma ]
+                                    [ contentsOrEmpty tile.contents ]
                                 , subtree
                                 ]
 
-            HorizThenVert ma h v ->
+            HorizThenVert h v ->
                 case getTile2 h v of
                     Nothing ->
                         gridContainer ( 2, 1 )
@@ -249,7 +240,7 @@ viewTile render tile (Tiles tiles) ( row, col ) =
                             [ gridContainer ( 1, 2 )
                                 ( 1, 1 )
                                 [ gridContents ( 1, 1 )
-                                    [ contentsOrEmpty ma
+                                    [ contentsOrEmpty tile.contents
                                     ]
                                 ]
                             ]
@@ -267,14 +258,14 @@ viewTile render tile (Tiles tiles) ( row, col ) =
                                 [ gridContainer ( 1, 2 )
                                     ( 1, 1 )
                                     [ gridContents ( 1, 1 )
-                                        [ contentsOrEmpty ma
+                                        [ contentsOrEmpty tile.contents
                                         ]
                                     , vsubtree
                                     ]
                                 , hsubtree
                                 ]
 
-            VertThenHoriz ma v h ->
+            VertThenHoriz v h ->
                 case getTile2 v h of
                     Nothing ->
                         gridContainer ( 1, 2 )
@@ -282,7 +273,7 @@ viewTile render tile (Tiles tiles) ( row, col ) =
                             [ gridContainer ( 2, 1 )
                                 ( 1, 1 )
                                 [ gridContents ( 1, 1 )
-                                    [ contentsOrEmpty ma
+                                    [ contentsOrEmpty tile.contents
                                     ]
                                 ]
                             ]
@@ -300,9 +291,10 @@ viewTile render tile (Tiles tiles) ( row, col ) =
                                 [ gridContainer ( 2, 1 )
                                     ( 1, 1 )
                                     [ gridContents ( 1, 1 )
-                                        [ contentsOrEmpty ma
+                                        [ contentsOrEmpty tile.contents
                                         ]
                                     , hsubtree
                                     ]
                                 , vsubtree
                                 ]
+
