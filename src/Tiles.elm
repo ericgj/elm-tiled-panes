@@ -3,14 +3,17 @@ module Tiles exposing
     , Tile
     , init
     , setContent, clearContent, updateContent
-    , splitHoriz
-    , splitVert
+    , zoom, clearZoom
+    , canSplitHoriz, canSplitVert
+    , splitHoriz, splitVert
     , view
     )
 
 import Array exposing (Array)
 import Html exposing (..)
 import Html.Attributes exposing (style)
+
+
 
 type Splits
     = Single
@@ -19,26 +22,44 @@ type Splits
     | HorizThenVert Int Int
     | VertThenHoriz Int Int
 
+
 type Tile contents
     = Tile
         { contents : Maybe contents
         , splits : Splits
         }
 
+
 type Tiles contents
-    = Tiles (Array (Tile contents))
+    = Tiles
+        { tiles : Array (Tile contents)
+        , zoom : Maybe Int
+        }
 
 
-single : Tile a
-single =
+
+-- Tile functions
+
+
+singleTile : Tile a
+singleTile =
     Tile { contents = Nothing, splits = Single }
+
+
+toSingleTile : Tile a -> Tile a
+toSingleTile (Tile tile) =
+    Tile { tile | splits = Single }
+
+
+
+-- Tiles functions
 
 
 init : Tiles a
 init =
     Array.empty
-        |> Array.push single
-        |> Tiles
+        |> Array.push singleTile
+        |> (\tiles -> Tiles { tiles = tiles, zoom = Nothing })
 
 
 setContent : Int -> a -> Tiles a -> Tiles a
@@ -52,7 +73,7 @@ clearContent index tiles =
 
 
 updateContent : Int -> (Maybe a -> Maybe a) -> Tiles a -> Tiles a
-updateContent index func (Tiles tiles) =
+updateContent index func (Tiles data) =
     let
         updTiles i (Tile tile) =
             if index == i then
@@ -60,51 +81,98 @@ updateContent index func (Tiles tiles) =
             else
                 Tile tile
     in
-        tiles
+        data.tiles
             |> Array.indexedMap updTiles
-            |> Tiles
+            |> flip setTiles (Tiles data)
+
+
+zoom : Int -> Tiles a -> Tiles a
+zoom index (Tiles data) =
+    if index < (Array.length data.tiles) then
+        Tiles { data | zoom = Just index }
+    else
+        Tiles data
+
+
+clearZoom : Tiles a -> Tiles a
+clearZoom (Tiles data) =
+    Tiles { data | zoom = Nothing }
+
+
+canSplitHoriz : Int -> Tiles a -> Bool
+canSplitHoriz index (Tiles data) =
+    let
+        check (Tile tile) =
+            case tile.splits of
+                Single ->
+                    True
+
+                Vert _ ->
+                    True
+
+                _ ->
+                    False
+    in
+        data.tiles
+            |> Array.get index
+            |> Maybe.map check
+            |> Maybe.withDefault False
+
+
+canSplitVert : Int -> Tiles a -> Bool
+canSplitVert index (Tiles data) =
+    let
+        check (Tile tile) =
+            case tile.splits of
+                Single ->
+                    True
+
+                Horiz _ ->
+                    True
+
+                _ ->
+                    False
+    in
+        data.tiles
+            |> Array.get index
+            |> Maybe.map check
+            |> Maybe.withDefault False
 
 
 splitHoriz : Int -> Tiles a -> Tiles a
-splitHoriz index (Tiles tiles) =
+splitHoriz index (Tiles data) =
     let
         newTile =
-            single
+            singleTile
 
         updTile (Tile tile) newIndex =
             case tile.splits of
                 Single ->
                     Tile { tile | splits = Horiz newIndex }
 
-                Horiz h ->
-                    Tile tile
-
                 Vert v ->
                     Tile { tile | splits = VertThenHoriz v newIndex }
 
-                HorizThenVert h v ->
-                    Tile tile
-
-                VertThenHoriz v h ->
+                _ ->
                     Tile tile
 
         updTiles i tile =
             if index == i then
-                updTile tile (Array.length tiles)
+                updTile tile (Array.length data.tiles)
             else
                 tile
     in
-        tiles
+        data.tiles
             |> Array.indexedMap updTiles
             |> Array.push newTile
-            |> Tiles
+            |> flip setTiles (Tiles data)
 
 
 splitVert : Int -> Tiles a -> Tiles a
-splitVert index (Tiles tiles) =
+splitVert index (Tiles data) =
     let
         newTile =
-            single
+            singleTile
 
         updTile (Tile tile) newIndex =
             case tile.splits of
@@ -114,45 +182,59 @@ splitVert index (Tiles tiles) =
                 Horiz h ->
                     Tile { tile | splits = HorizThenVert h newIndex }
 
-                Vert v ->
-                    Tile tile
-
-                HorizThenVert h v ->
-                    Tile tile
-
-                VertThenHoriz v h ->
+                _ ->
                     Tile tile
 
         updTiles i tile =
             if index == i then
-                updTile tile (Array.length tiles)
+                updTile tile (Array.length data.tiles)
             else
                 tile
     in
-        tiles
+        data.tiles
             |> Array.indexedMap updTiles
             |> Array.push newTile
-            |> Tiles
+            |> flip setTiles (Tiles data)
+
+
+
+-- internal
+
+
+setTiles : Array (Tile a) -> Tiles a -> Tiles a
+setTiles tiles (Tiles data) =
+    Tiles { data | tiles = tiles }
 
 
 view : (a -> Html msg) -> Tiles a -> Html msg
-view render (Tiles tiles) =
+view render (Tiles data) =
     let
-        viewHead tile =
-            viewTile render tile (Tiles tiles) ( 1, 1 )
+        viewTop tile =
+            viewTile render tile (Tiles data) ( 1, 1 )
     in
-        tiles
-            |> Array.get 0
-            |> Maybe.map viewHead
-            |> Maybe.withDefault (text "")
+        case data.zoom of
+            Nothing ->
+                data.tiles
+                    |> Array.get 0
+                    |> Maybe.map viewTop
+                    |> Maybe.withDefault (text "")
+
+            Just n ->
+                data.tiles
+                    |> Array.get n
+                    |> Maybe.map (toSingleTile >> viewTop)
+                    |> Maybe.withDefault (text "")
+
 
 
 -- note: shockingly complex, and not tail-call-optimized
+
+
 viewTile : (a -> Html msg) -> Tile a -> Tiles a -> ( Int, Int ) -> Html msg
-viewTile render (Tile tile) (Tiles tiles) ( row, col ) =
+viewTile render (Tile tile) (Tiles data) ( row, col ) =
     let
         getTile index =
-            tiles
+            data.tiles
                 |> Array.get index
 
         getTile2 index1 index2 =
@@ -202,7 +284,7 @@ viewTile render (Tile tile) (Tiles tiles) ( row, col ) =
                     Just htile ->
                         let
                             subtree =
-                                viewTile render htile (Tiles tiles) ( 2, 1 )
+                                viewTile render htile (Tiles data) ( 2, 1 )
                         in
                             gridContainer ( 2, 1 )
                                 ( row, col )
@@ -223,7 +305,7 @@ viewTile render (Tile tile) (Tiles tiles) ( row, col ) =
                     Just vtile ->
                         let
                             subtree =
-                                viewTile render vtile (Tiles tiles) ( 1, 2 )
+                                viewTile render vtile (Tiles data) ( 1, 2 )
                         in
                             gridContainer ( 1, 2 )
                                 ( row, col )
@@ -248,10 +330,10 @@ viewTile render (Tile tile) (Tiles tiles) ( row, col ) =
                     Just ( htile, vtile ) ->
                         let
                             hsubtree =
-                                viewTile render htile (Tiles tiles) ( 2, 1 )
+                                viewTile render htile (Tiles data) ( 2, 1 )
 
                             vsubtree =
-                                viewTile render vtile (Tiles tiles) ( 1, 2 )
+                                viewTile render vtile (Tiles data) ( 1, 2 )
                         in
                             gridContainer ( 2, 1 )
                                 ( row, col )
@@ -281,10 +363,10 @@ viewTile render (Tile tile) (Tiles tiles) ( row, col ) =
                     Just ( vtile, htile ) ->
                         let
                             hsubtree =
-                                viewTile render htile (Tiles tiles) ( 2, 1 )
+                                viewTile render htile (Tiles data) ( 2, 1 )
 
                             vsubtree =
-                                viewTile render vtile (Tiles tiles) ( 1, 2 )
+                                viewTile render vtile (Tiles data) ( 1, 2 )
                         in
                             gridContainer ( 1, 2 )
                                 ( row, col )
@@ -297,4 +379,3 @@ viewTile render (Tile tile) (Tiles tiles) ( row, col ) =
                                     ]
                                 , vsubtree
                                 ]
-
