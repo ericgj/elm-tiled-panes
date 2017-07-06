@@ -1,10 +1,11 @@
 module Tiles exposing
     ( Tiles
     , Tile
+    , CanSplit
     , init
     , setContent, clearContent, updateContent
     , zoom, clearZoom
-    , canSplitHoriz, canSplitVert
+    , canSplit, canSplitHoriz, canSplitVert
     , splitHoriz, splitVert
     , view
     )
@@ -22,6 +23,10 @@ type Splits
     | HorizThenVert Int Int
     | VertThenHoriz Int Int
 
+type alias CanSplit =
+    { horiz :  Bool
+    , vert : Bool
+    }
 
 type Tile contents
     = Tile
@@ -99,44 +104,44 @@ clearZoom (Tiles data) =
     Tiles { data | zoom = Nothing }
 
 
-canSplitHoriz : Int -> Tiles a -> Bool
-canSplitHoriz index (Tiles data) =
+canSplit : Int -> Tiles a -> CanSplit
+canSplit index (Tiles data) =
     let
         check (Tile tile) =
             case tile.splits of
                 Single ->
-                    True
-
-                Vert _ ->
-                    True
-
-                _ ->
-                    False
-    in
-        data.tiles
-            |> Array.get index
-            |> Maybe.map check
-            |> Maybe.withDefault False
-
-
-canSplitVert : Int -> Tiles a -> Bool
-canSplitVert index (Tiles data) =
-    let
-        check (Tile tile) =
-            case tile.splits of
-                Single ->
-                    True
+                    { horiz = True
+                    , vert = True
+                    }
 
                 Horiz _ ->
-                    True
+                    { horiz = False
+                    , vert = True
+                    }
+
+                Vert _ ->
+                    { horiz = True
+                    , vert = False
+                    }
 
                 _ ->
-                    False
+                    { horiz = False
+                    , vert = False
+                    }
     in
         data.tiles
             |> Array.get index
             |> Maybe.map check
-            |> Maybe.withDefault False
+            |> Maybe.withDefault { horiz = False, vert = False }
+
+
+canSplitHoriz : Int -> Tiles a -> Bool
+canSplitHoriz index tiles =
+    canSplit index tiles |> .horiz
+
+canSplitVert : Int -> Tiles a -> Bool
+canSplitVert index tiles =
+    canSplit index tiles |> .vert
 
 
 splitHoriz : Int -> Tiles a -> Tiles a
@@ -205,6 +210,8 @@ setTiles : Array (Tile a) -> Tiles a -> Tiles a
 setTiles tiles (Tiles data) =
     Tiles { data | tiles = tiles }
 
+    
+-- VIEW
 
 view : (a -> Html msg) -> Tiles a -> Html msg
 view render (Tiles data) =
