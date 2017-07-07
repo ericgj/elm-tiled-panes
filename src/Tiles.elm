@@ -2,6 +2,7 @@ module Tiles exposing
     ( Tiles
     , Tile
     , CanSplit
+    , TileContext
     , init
     , setContent, clearContent, updateContent
     , zoom, clearZoom
@@ -23,11 +24,6 @@ type Splits
     | HorizThenVert Int Int
     | VertThenHoriz Int Int
 
-type alias CanSplit =
-    { horiz :  Bool
-    , vert : Bool
-    }
-
 type Tile contents
     = Tile
         { contents : Maybe contents
@@ -42,9 +38,31 @@ type Tiles contents
         }
 
 
+type Config contents msg
+    = Config
+        { gridAttributes : List (Html.Attribute msg)
+        , view : (TileContext contents -> Html msg)
+        }
+
+-- exposed to calling context
+
+type alias TileContext contents =
+    { index : Int
+    , canSplit : CanSplit
+    , tile : Tile contents
+    }
+
+type alias CanSplit =
+    { horiz :  Bool
+    , vert : Bool
+    }
+
 
 -- Tile functions
 
+tileContents : Tile a -> Maybe a
+tileContents (Tile {contents}) =
+    contents
 
 singleTile : Tile a
 singleTile =
@@ -54,6 +72,43 @@ singleTile =
 toSingleTile : Tile a -> Tile a
 toSingleTile (Tile tile) =
     Tile { tile | splits = Single }
+
+toTileContext : Int -> Bool -> Tile a -> TileContext a
+toTileContext index zoom tile =
+    let
+        newTile = 
+            if zoom then 
+                (toSingleTile tile)
+            else
+                tile
+    in
+        { index = index
+        , canSplit = canSplitTile tile   -- note based on existing tile
+        , tile = newTile
+        }
+
+canSplitTile : Tile a -> CanSplit
+canSplitTile (Tile tile) =
+    case tile.splits of
+        Single ->
+            { horiz = True
+            , vert = True
+            }
+
+        Horiz _ ->
+            { horiz = False
+            , vert = True
+            }
+
+        Vert _ ->
+            { horiz = True
+            , vert = False
+            }
+
+        _ ->
+            { horiz = False
+            , vert = False
+            }
 
 
 
@@ -106,33 +161,10 @@ clearZoom (Tiles data) =
 
 canSplit : Int -> Tiles a -> CanSplit
 canSplit index (Tiles data) =
-    let
-        check (Tile tile) =
-            case tile.splits of
-                Single ->
-                    { horiz = True
-                    , vert = True
-                    }
-
-                Horiz _ ->
-                    { horiz = False
-                    , vert = True
-                    }
-
-                Vert _ ->
-                    { horiz = True
-                    , vert = False
-                    }
-
-                _ ->
-                    { horiz = False
-                    , vert = False
-                    }
-    in
-        data.tiles
-            |> Array.get index
-            |> Maybe.map check
-            |> Maybe.withDefault { horiz = False, vert = False }
+    data.tiles
+        |> Array.get index
+        |> Maybe.map canSplitTile
+        |> Maybe.withDefault { horiz = False, vert = False }
 
 
 canSplitHoriz : Int -> Tiles a -> Bool
@@ -210,45 +242,51 @@ setTiles : Array (Tile a) -> Tiles a -> Tiles a
 setTiles tiles (Tiles data) =
     Tiles { data | tiles = tiles }
 
+
+tileContext : Int -> Tiles a -> Maybe (TileContext a)
+tileContext index (Tiles data) =
+    let
+        toContext tile =
+            data.zoom
+                |> Maybe.map ( (==) index )
+                |> Maybe.withDefault False
+                |> (\zoom -> toTileContext index zoom tile)
+    in
+        data.tiles
+            |> Array.get index
+            |> Maybe.map toContext
+
+
     
 -- VIEW
 
-view : (a -> Html msg) -> Tiles a -> Html msg
-view render (Tiles data) =
+view : Config a msg -> Tiles a -> Html msg
+view config (Tiles data) =
     let
-        viewTop tile =
-            viewTile render tile (Tiles data) ( 1, 1 )
+        viewTop context =
+            viewTile config context (Tiles data) ( 1, 1 )
     in
-        case data.zoom of
-            Nothing ->
-                data.tiles
-                    |> Array.get 0
-                    |> Maybe.map viewTop
-                    |> Maybe.withDefault (text "")
-
-            Just n ->
-                data.tiles
-                    |> Array.get n
-                    |> Maybe.map (toSingleTile >> viewTop)
-                    |> Maybe.withDefault (text "")
-
+        data.zoom
+            |> Maybe.withDefault 0
+            |> flip tileContext (Tiles data)
+            |> Maybe.map viewTop
+            |> Maybe.withDefault (text "")
 
 
 -- note: shockingly complex, and not tail-call-optimized
 
 
-viewTile : (a -> Html msg) -> Tile a -> Tiles a -> ( Int, Int ) -> Html msg
-viewTile render (Tile tile) (Tiles data) ( row, col ) =
+viewTile : Config a msg -> TileContext a -> Tiles a -> ( Int, Int ) -> Html msg
+viewTile (Config config) ctx (Tiles data) ( row, col ) =
     let
-        getTile index =
-            data.tiles
-                |> Array.get index
+        splits (Tile tile) =
+            tile.splits
 
-        getTile2 index1 index2 =
-            Maybe.map2 (,) (getTile index1) (getTile index2)
+        getTileContext index =
+            tileContext index (Tiles data)
 
-        contentsOrEmpty ma =
-            Maybe.map render ma |> Maybe.withDefault (text "")
+        getTileContext2 index1 index2 =
+            Maybe.map2 (,) (getTileContext index1) (getTileContext index2)
 
         gridContainer ( rows, cols ) ( row, col ) children =
             div
@@ -264,72 +302,82 @@ viewTile render (Tile tile) (Tiles data) ( row, col ) =
 
         gridContents ( row, col ) children =
             div
-                [ style
-                    [ ( "grid-row", toString row )
-                    , ( "grid-column", toString col )
+                ( config.gridAttributes ++
+                    [ style
+                        [ ( "grid-row", toString row )
+                        , ( "grid-column", toString col )
+                        ]
                     ]
-                ]
+                )
                 children
     in
-        case tile.splits of
+        case splits ctx.tile of
             Single ->
                 gridContainer ( 1, 1 )
                     ( row, col )
                     [ gridContents ( 1, 1 )
-                        [ contentsOrEmpty tile.contents ]
+                        [ config.view ctx ]
                     ]
 
             Horiz h ->
-                case getTile h of
+                case getTileContext h of
                     Nothing ->
                         gridContainer ( 2, 1 )
                             ( row, col )
                             [ gridContents ( 1, 1 )
-                                [ contentsOrEmpty tile.contents ]
+                                [ config.view ctx ]
                             ]
 
                     Just htile ->
                         let
                             subtree =
-                                viewTile render htile (Tiles data) ( 2, 1 )
+                                viewTile 
+                                    (Config config) 
+                                    htile 
+                                    (Tiles data) 
+                                    ( 2, 1 )
                         in
                             gridContainer ( 2, 1 )
                                 ( row, col )
                                 [ gridContents ( 1, 1 )
-                                    [ contentsOrEmpty tile.contents ]
+                                    [ config.view ctx ]
                                 , subtree
                                 ]
 
             Vert v ->
-                case getTile v of
+                case getTileContext v of
                     Nothing ->
                         gridContainer ( 1, 2 )
                             ( row, col )
                             [ gridContents ( 1, 1 )
-                                [ contentsOrEmpty tile.contents ]
+                                [ config.view ctx ]
                             ]
 
                     Just vtile ->
                         let
                             subtree =
-                                viewTile render vtile (Tiles data) ( 1, 2 )
+                                viewTile 
+                                    (Config config) 
+                                    vtile 
+                                    (Tiles data) 
+                                    ( 1, 2 )
                         in
                             gridContainer ( 1, 2 )
                                 ( row, col )
                                 [ gridContents ( 1, 1 )
-                                    [ contentsOrEmpty tile.contents ]
+                                    [ config.view ctx ]
                                 , subtree
                                 ]
 
             HorizThenVert h v ->
-                case getTile2 h v of
+                case getTileContext2 h v of
                     Nothing ->
                         gridContainer ( 2, 1 )
                             ( row, col )
                             [ gridContainer ( 1, 2 )
                                 ( 1, 1 )
                                 [ gridContents ( 1, 1 )
-                                    [ contentsOrEmpty tile.contents
+                                    [ config.view ctx
                                     ]
                                 ]
                             ]
@@ -337,17 +385,25 @@ viewTile render (Tile tile) (Tiles data) ( row, col ) =
                     Just ( htile, vtile ) ->
                         let
                             hsubtree =
-                                viewTile render htile (Tiles data) ( 2, 1 )
+                                viewTile 
+                                    (Config config) 
+                                    htile 
+                                    (Tiles data) 
+                                    ( 2, 1 )
 
                             vsubtree =
-                                viewTile render vtile (Tiles data) ( 1, 2 )
+                                viewTile 
+                                    (Config config) 
+                                    vtile 
+                                    (Tiles data) 
+                                    ( 1, 2 )
                         in
                             gridContainer ( 2, 1 )
                                 ( row, col )
                                 [ gridContainer ( 1, 2 )
                                     ( 1, 1 )
                                     [ gridContents ( 1, 1 )
-                                        [ contentsOrEmpty tile.contents
+                                        [ config.view ctx
                                         ]
                                     , vsubtree
                                     ]
@@ -355,14 +411,14 @@ viewTile render (Tile tile) (Tiles data) ( row, col ) =
                                 ]
 
             VertThenHoriz v h ->
-                case getTile2 v h of
+                case getTileContext2 v h of
                     Nothing ->
                         gridContainer ( 1, 2 )
                             ( row, col )
                             [ gridContainer ( 2, 1 )
                                 ( 1, 1 )
                                 [ gridContents ( 1, 1 )
-                                    [ contentsOrEmpty tile.contents
+                                    [ config.view ctx
                                     ]
                                 ]
                             ]
@@ -370,19 +426,36 @@ viewTile render (Tile tile) (Tiles data) ( row, col ) =
                     Just ( vtile, htile ) ->
                         let
                             hsubtree =
-                                viewTile render htile (Tiles data) ( 2, 1 )
+                                viewTile 
+                                    (Config config) 
+                                    htile 
+                                    (Tiles data) 
+                                    ( 2, 1 )
 
                             vsubtree =
-                                viewTile render vtile (Tiles data) ( 1, 2 )
+                                viewTile 
+                                    (Config config) 
+                                    vtile 
+                                    (Tiles data) 
+                                    ( 1, 2 )
                         in
                             gridContainer ( 1, 2 )
                                 ( row, col )
                                 [ gridContainer ( 2, 1 )
                                     ( 1, 1 )
                                     [ gridContents ( 1, 1 )
-                                        [ contentsOrEmpty tile.contents
+                                        [ config.view ctx
                                         ]
                                     , hsubtree
                                     ]
                                 , vsubtree
                                 ]
+
+
+-- CONFIG
+
+customConfig : 
+    { a | gridAttributes : List (Html.Attribute msg), view : TileContext contents -> Html msg } 
+    -> Config contents msg
+customConfig { gridAttributes, view } =
+    Config { gridAttributes = gridAttributes, view = view }
