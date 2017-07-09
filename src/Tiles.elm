@@ -3,13 +3,16 @@ module Tiles exposing
     , Tile
     , CanSplit
     , TileContext
+    , Config
     , init
     , setContent, clearContent, updateContent
     , zoom, clearZoom
     , canSplit, canSplitHoriz, canSplitVert, canRemove
     , splitHoriz, splitVert
     , remove
+    , tileContents
     , view
+    , customConfig
     )
 
 import Array exposing (Array)
