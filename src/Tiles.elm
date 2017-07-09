@@ -6,8 +6,9 @@ module Tiles exposing
     , init
     , setContent, clearContent, updateContent
     , zoom, clearZoom
-    , canSplit, canSplitHoriz, canSplitVert
+    , canSplit, canSplitHoriz, canSplitVert, canRemove
     , splitHoriz, splitVert
+    , remove
     , view
     )
 
@@ -49,6 +50,7 @@ type Config contents msg
 type alias TileContext contents =
     { index : Int
     , canSplit : CanSplit
+    , zoomed : Bool
     , tile : Tile contents
     }
 
@@ -84,6 +86,7 @@ toTileContext index zoom tile =
     in
         { index = index
         , canSplit = canSplitTile tile   -- note based on existing tile
+        , zoomed = zoom
         , tile = newTile
         }
 
@@ -110,6 +113,39 @@ canSplitTile (Tile tile) =
             , vert = False
             }
 
+removeSplitTile : Int -> Tile a -> Tile a
+removeSplitTile index (Tile tile) =
+    case tile.splits of
+        Single ->
+            Tile tile
+
+        Horiz h ->
+            if index == h then
+                Tile { tile | splits = Single }
+            else
+                Tile tile
+
+        Vert v ->
+            if index == v then
+                Tile { tile | splits = Single }
+            else
+                Tile tile
+          
+        HorizThenVert h v ->
+            if index == h then
+                Tile { tile | splits = Vert v }
+            else if index == v then
+                Tile { tile | splits = Horiz h }
+            else
+                Tile tile
+
+        VertThenHoriz v h ->
+            if index == h then
+                Tile { tile | splits = Vert v }
+            else if index == v then
+                Tile { tile | splits = Horiz h }
+            else
+                Tile tile
 
 
 -- Tiles functions
@@ -233,6 +269,19 @@ splitVert index (Tiles data) =
             |> Array.push newTile
             |> flip setTiles (Tiles data)
 
+
+canRemove : Int -> Tiles a -> Bool
+canRemove index tiles =
+    index > 0
+
+remove : Int -> Tiles a -> Tiles a
+remove index (Tiles data) =
+    if index == 0 then
+        Tiles data
+    else
+        data.tiles
+            |> Array.map (removeSplitTile index)
+            |> flip setTiles (Tiles data)
 
 
 -- internal
